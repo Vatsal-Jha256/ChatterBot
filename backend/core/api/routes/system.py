@@ -5,7 +5,7 @@ import requests
 import logging
 import time
 
-from backend.core.api.dependencies import verify_api_key, get_redis_client
+from backend.core.api.dependencies import verify_api_key, get_redis_client, redis_pool
 from backend.database.db_service import get_db
 from backend.rabbitmq.rabbitmq_service import get_rabbitmq_connection
 from backend.core.config.settings import RAY_SERVE_URL, CHAT_QUEUE, RESPONSE_QUEUE, BATCH_QUEUE
@@ -14,12 +14,6 @@ from backend.core.config.settings import API_KEY, REDIS_HOST, REDIS_PORT, REDIS_
 router = APIRouter(tags=["System"])
 logger = logging.getLogger(__name__)
 
-# Redis connection pool
-redis_pool = redis.ConnectionPool(
-    host=REDIS_HOST, 
-    port=REDIS_PORT, 
-    db=REDIS_DB
-)
 
 @router.get("/health")
 async def health_check():

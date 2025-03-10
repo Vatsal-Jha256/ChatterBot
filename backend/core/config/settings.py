@@ -10,7 +10,7 @@ REDIS_DB = int(os.getenv('REDIS_DB', 0))
 
 # API Configuration
 API_KEY = os.getenv('API_KEY', 'apitest1729')
-RAY_SERVE_URL = os.getenv('RAY_SERVE_URL', 'http://localhost:8000/generate')
+RAY_SERVE_URL = os.getenv('RAY_SERVE_URL', 'http://localhost:8000')
 
 # RabbitMQ Configuration
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')

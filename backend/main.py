@@ -17,7 +17,7 @@ import uvicorn
 from backend.rabbitmq.rabbitmq_service import ensure_rabbitmq_running
 
 from dotenv import load_dotenv
-
+#TODO: remove .vscode as well
 # Load environment variables
 load_dotenv()
 
@@ -58,3 +58,4 @@ async def startup_event():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)
+

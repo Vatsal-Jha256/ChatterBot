@@ -8,7 +8,7 @@ class APIRequest(BaseModel):
     context: Optional[List[str]] = Field(default_factory=list, max_length=10)
     max_tokens: int = Field(default=256, ge=10, le=1024)
     temperature: float = Field(default=0.7, ge=0.1, le=1.0)
-    conversation_id: Optional[int] = None
+    conversation_id: Optional[str] = None
     stream: bool = Field(default=False)  # Flag for streaming response
     
     @field_validator('message')

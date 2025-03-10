@@ -1,26 +1,26 @@
-# api/routes/chat.py
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException, Response
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 import redis.asyncio as redis
 import uuid
 import logging
-import asyncio
 import json
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from backend.core.models.api_models import APIRequest
 from backend.core.api.dependencies import verify_api_key, get_redis_client
 from backend.core.utils.formatting import format_markdown_response
 from backend.core.utils.async_utils import process_db_operation
 from backend.core.services.ray_service import handle_ray_request
+from backend.core.adapters.ray_adapter import RayServeAdapter
 from backend.database.db_service import ChatHistoryService, get_db
 from backend.core.utils.compression import compress_text
 from backend.rabbitmq.rabbitmq_service import RabbitMQPublisher
 from backend.core.services.context_service import get_user_context
 from backend.core.config.settings import CHAT_QUEUE
 from fastapi.responses import StreamingResponse
+
 router = APIRouter(tags=["Chat"])
 limiter = Limiter(key_func=get_remote_address)
 logger = logging.getLogger(__name__)
@@ -35,25 +35,21 @@ async def advanced_chat(
 ):
     start_time = time.time()
     try:
+        # Validate request payload
+        if not payload.message or len(payload.message.strip()) < 1:
+            return {"response": "Please provide a valid message."}
+            
         # Retrieve stored context
         stored_context = await get_user_context(payload.user_id, redis_client, payload.conversation_id)
         
         # Limit context to prevent over-bloating
         context_list = stored_context[-4:] + payload.context  # Last 4 previous exchanges + current context
         
-        # Validate message
-        if not payload.message or len(payload.message.strip()) < 1:
-            return {"response": "Please provide a valid message."}
+        # Update payload with merged context
+        payload_copy = payload.copy(update={"context": context_list})
         
-        # Call Ray Serve for inference
-        ray_payload = {
-            "context": context_list,
-            "message": payload.message,
-            "max_tokens": payload.max_tokens,
-            "temperature": payload.temperature
-        }
-        
-        result = await handle_ray_request(ray_payload)
+        # Call Ray Serve for inference using the adapter service
+        result = await handle_ray_request(payload_copy.dict())
         
         # Extract response
         valid_response = result.get("response", "I apologize, but I couldn't generate a meaningful response.")
@@ -83,7 +79,9 @@ async def advanced_chat(
         processing_time = time.time() - start_time
         user_token_count = len(payload.message.split()) * 1.3  # Rough approximation
         assistant_token_count = len(valid_response.split()) * 1.3  # Rough approximation
-        valid_response = format_markdown_response(valid_response)
+        
+        # Format response for markdown
+        formatted_response = format_markdown_response(valid_response)
         
         # Store in database for long-term persistence
         with get_db() as db:
@@ -91,7 +89,7 @@ async def advanced_chat(
                 db,
                 payload.user_id,
                 payload.message,
-                valid_response,
+                valid_response,  # Store unformatted response in DB
                 conversation_id=payload.conversation_id,
                 user_token_count=int(user_token_count),
                 assistant_token_count=int(assistant_token_count),
@@ -102,8 +100,9 @@ async def advanced_chat(
             conversation_id = db_result.get("conversation_id", None)
             
         return {
-            "response": valid_response,
-            "conversation_id": conversation_id
+            "response": formatted_response,
+            "conversation_id": conversation_id,
+            "processing_time": processing_time
         }
     
     except Exception as e:
@@ -137,7 +136,11 @@ async def async_chat(
         # Publish to RabbitMQ
         publisher = RabbitMQPublisher()
         await publisher.initialize()  # Initialize async
-        publish_success = await publisher.publish_message(CHAT_QUEUE, task_data, correlation_id)
+        publish_success = await publisher.publish_message(
+            queue_name=CHAT_QUEUE,
+            message=task_data,
+            correlation_id=correlation_id
+        )
         await publisher.close()
 
         if not publish_success:
@@ -168,7 +171,8 @@ async def async_chat(
             return {
                 "status": "processing",
                 "message": "Your request is being processed",
-                "correlation_id": correlation_id
+                "correlation_id": correlation_id,
+                "check_endpoint": f"/check-response/{correlation_id}"
             }
     except Exception as e:
         logger.error(f"Async chat request error: {e}")
@@ -179,14 +183,20 @@ async def direct_generate(
     request: Request,
     api_key: str = Depends(verify_api_key)
 ):
+    """Direct access to LLM generation through the Ray adapter"""
     try:
         body = await request.json()
+        
+        # Check for streaming request
         if body.get("stream", False):
+            # For streaming response, use StreamingResponse
+            generator = handle_ray_request(body)
             return StreamingResponse(
-                handle_ray_request(body),
+                generator,
                 media_type="application/x-ndjson"
             )
         else:
+            # For non-streaming, await the result
             result = await handle_ray_request(body)
             return result
     except Exception as e:
@@ -208,7 +218,18 @@ async def check_response(
             # Response found
             if isinstance(response_json, bytes):
                 response_json = response_json.decode('utf-8')
-            return json.loads(response_json)
+                
+            # Parse response
+            response_data = json.loads(response_json)
+            
+            # Check if response contains "response" key and format it
+            if "response" in response_data:
+                response_data["response"] = format_markdown_response(response_data["response"])
+                
+            # Delete the response from Redis after retrieving it
+            await redis_client.delete(f"response:{correlation_id}")
+            
+            return response_data
         else:
             # Response not available yet
             return {"status": "pending", "message": "Response not ready yet"}

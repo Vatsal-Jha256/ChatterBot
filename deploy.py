@@ -1,11 +1,18 @@
+#!/usr/bin/env python3
+"""
+Unified Deployment Script for LLM Chatbot System
+Manages Redis, Database, Ray Serve deployments, and FastAPI server
+"""
+
 import os
+import sys
+import time
 import argparse
 import subprocess
-import time
-import sys
 import logging
 import requests
-from pathlib import Path
+import redis
+from redis.exceptions import ConnectionError
 import ray
 from ray import serve
 
@@ -16,176 +23,231 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+from dotenv import load_dotenv
+#TODO: remove .vscode as well
+# Load environment variables
+load_dotenv()
 
-def start_redis():
-    """Ensure Redis is running for context storage"""
+# Service configuration defaults
+DEFAULT_CONFIG = {
+    "redis_container": "llm-redis",
+    "redis_port": 6379,
+    "api_port": 8001,
+    "api_host": "0.0.0.0",
+    "ray_init_cpus": 4,
+    "ray_init_gpus": 1,
+    "healthcheck_timeout": 300  # 5 minutes
+}
+
+def check_redis_connection(host="localhost", port=6379):
+    """Check if Redis is available and return connection status."""
     try:
-        import redis
-        r = redis.Redis(host='localhost', port=6379, db=0)
+        r = redis.Redis(host=host, port=port, socket_connect_timeout=1)
         r.ping()
-        logger.info("Redis is already running")
-    except Exception as e:
-        logger.info(f"Redis check failed: {e}. Starting Redis")
-        try:
-            result = subprocess.run(
-                ["docker", "ps", "-a", "--filter", "name=llm-redis", "--format", "{{.Names}}"],
-                capture_output=True, text=True
-            )
-            if "llm-redis" in result.stdout:
-                subprocess.run(["docker", "start", "llm-redis"], check=True)
-            else:
+        return True
+    except ConnectionError:
+        return False
+
+def manage_redis_service(action="start"):
+    """Manage Redis service via Docker."""
+    container_exists = subprocess.run(
+        ["docker", "ps", "-a", "--filter", f"name={DEFAULT_CONFIG['redis_container']}", "--format", "{{.Names}}"],
+        capture_output=True, text=True
+    ).stdout.strip()
+
+    try:
+        if action == "start":
+            if check_redis_connection():
+                logger.info("Redis is already running")
+                return True
+
+            if container_exists:
+                logger.info("Starting existing Redis container")
                 subprocess.run(
-                    ["docker", "run", "-d", "-p", "6379:6379", "--name", "llm-redis", "redis"],
+                    ["docker", "start", DEFAULT_CONFIG["redis_container"]],
                     check=True
                 )
-            time.sleep(2)
-            r = redis.Redis(host='localhost', port=6379, db=0)
-            r.ping()
-            logger.info("Redis started successfully")
-        except Exception as e:
-            logger.error(f"Could not start Redis: {e}")
-            sys.exit(1)
+            else:
+                logger.info("Creating new Redis container")
+                subprocess.run([
+                    "docker", "run", "-d",
+                    "-p", f"{DEFAULT_CONFIG['redis_port']}:6379",
+                    "--name", DEFAULT_CONFIG["redis_container"],
+                    "redis:alpine"
+                ], check=True)
+
+            # Verify startup
+            for _ in range(10):
+                if check_redis_connection():
+                    return True
+                time.sleep(1)
+            raise ConnectionError("Redis didn't start within 10 seconds")
+
+        elif action == "stop":
+            if container_exists:
+                subprocess.run(
+                    ["docker", "stop", DEFAULT_CONFIG["redis_container"]],
+                    check=True
+                )
+                logger.info("Redis container stopped")
+            return True
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Redis management failed: {str(e)}")
+        return False
 
 def init_database():
-    """Initialize database for long-term storage"""
+    """Initialize the application database."""
     try:
         logger.info("Initializing database...")
+        # Adjust imports according to your project structure
         from backend.database.db_models import init_db
         init_db()
-        logger.info("Database initialized")
+        logger.info("Database initialized successfully")
+        return True
     except Exception as e:
-        logger.error(f"Database init failed: {e}")
-        sys.exit(1)
+        logger.error(f"Database initialization failed: {str(e)}")
+        return False
 
-def deploy_ray_serve(model_name, num_replicas=1, gpu_memory_util=0.9, max_model_len=4096):
-    """
-    Deploy the vLLM service using Ray Serve.
-    This function initializes the Ray cluster if needed, deploys the service,
-    and waits until the deployments are healthy.
-    """
+def deploy_ray_serve_model(model_config):
+    """Deploy the LLM model using Ray Serve."""
     try:
-        # Initialize Ray if not already initialized.
         if not ray.is_initialized():
             ray.init(
                 ignore_reinit_error=True,
                 runtime_env={"working_dir": "."},
-                num_cpus=4,
-                num_gpus=1
+                num_cpus=DEFAULT_CONFIG["ray_init_cpus"],
+                num_gpus=DEFAULT_CONFIG["ray_init_gpus"]
             )
-            logger.info("Ray local cluster initialized")
+            logger.info("Ray runtime initialized")
 
-        # Import the deployment function.
+        # Import your deployment configuration
         from backend.rayserve_vllm.vllm_serve import deployment
 
-        deployment_args = {
-            "model": model_name,
-            "load_format": "auto",
-            "dtype": "auto",
-            "max_model_len": max_model_len,
-            "gpu_memory_utilization": gpu_memory_util,
-            "ray_actor_options": {"num_gpus": 1.0}
-        }
-        logger.info(f"Deploying Ray Serve with args: {deployment_args}")
-        app = deployment(deployment_args)
-
-        # Run the application.
-        serve.run(app, name="vllm_service", route_prefix="/")
-
-        # Wait for deployment(s) to be healthy.
+        logger.info(f"Deploying model: {model_config['model']}")  # CORRECTED LINE
+        app_handle = deployment(model_config)
+        serve.run(app_handle, name="vllm_service", route_prefix="/")
+        # Verify deployment health
         client = serve.context._connect()
         start_time = time.time()
-        while True:
-            if time.time() - start_time > 300:
-                raise TimeoutError("Deployment timed out after 5 minutes")
-            try:
-                statuses = client.get_all_deployment_statuses()
-                # Check that VLLMInference is healthy.
-                inference_status = statuses.get("VLLMInference")
-                # Optionally, if you have an additional router deployment, check it too.
-                router_status = statuses.get("VLLMInferenceRouter")
-                if (inference_status is not None and inference_status.status == "HEALTHY" and
-                    (router_status is None or router_status.status == "HEALTHY")):
-                    logger.info("Deployment healthy")
-                    return True
-                time.sleep(5)
-            except Exception as e:
-                logger.warning(f"Waiting for deployment: {str(e)}")
-                time.sleep(5)
+        while time.time() - start_time < DEFAULT_CONFIG["healthcheck_timeout"]:
+            statuses = client.get_all_deployment_statuses()
+            # Check if any deployment matches our name and status
+            healthy = any(
+                status.name == "VLLMInference" and status.status == "HEALTHY"
+                for status in statuses
+            )
+            if healthy:
+                logger.info("Model deployment healthy")
+                return True
+            time.sleep(5)
+        raise TimeoutError("Model deployment health check timed out")
 
     except Exception as e:
-        logger.error(f"Deployment failed: {e}", exc_info=True)
+        logger.error(f"Ray Serve deployment failed: {str(e)}")
         return False
 
-def start_api_server():
-    """Start the FastAPI server"""
+def manage_api_server(action="start"):
+    """Manage the FastAPI server process."""
+    api_process = None
+    api_script = os.path.join(os.path.dirname(__file__), "backend", "main.py")
+
     try:
-        logger.info("Starting API server")
-        api_script = Path("backend/main.py").absolute()
-        process = subprocess.Popen(
-            [sys.executable, str(api_script)],
-            env=os.environ.copy(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT
-        )
+        if action == "start":
+            logger.info("Starting API server")
+            api_process = subprocess.Popen(
+                [sys.executable, api_script],
+                env=os.environ.copy(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
 
-        # Monitor server startup.
-        for _ in range(30):
-            if process.poll() is not None:
-                break
-            try:
-                requests.get("http://localhost:8000/docs", timeout=1)
-                logger.info("API server ready")
-                return process
-            except Exception:
-                time.sleep(1)
+            # Monitor startup
+            start_time = time.time()
+            while time.time() - start_time < DEFAULT_CONFIG["healthcheck_timeout"]:
+                if api_process.poll() is not None:
+                    break
+                try:
+                    response = requests.get(
+                        f"http://{DEFAULT_CONFIG['api_host']}:{DEFAULT_CONFIG['api_port']}/docs",
+                        timeout=1
+                    )
+                    if response.status_code == 200:
+                        logger.info("API server ready")
+                        return api_process
+                except requests.ConnectionError:
+                    time.sleep(1)
+            
+            if api_process.poll() is None:
+                logger.error("API server health check timed out")
+                api_process.terminate()
+            return None
 
-        logger.error("API server failed to start")
-        return False
+        elif action == "stop" and api_process:
+            api_process.terminate()
+            logger.info("API server stopped")
 
     except Exception as e:
-        logger.error(f"API server error: {e}")
-        return False
+        logger.error(f"API server management failed: {str(e)}")
+        return None
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="LLM Service Deployment")
-    parser.add_argument("--model", default="asprenger/meta-llama-Llama-2-7b-chat-hf-gemm-w4-g128-awq")
-    parser.add_argument("--replicas", type=int, default=1)
-    parser.add_argument("--gpu-memory-util", type=float, default=0.9)
-    parser.add_argument("--max-model-len", type=int, default=4096)
-    parser.add_argument("--api-only", action="store_true")
-    parser.add_argument("--ray-only", action="store_true")
-    parser.add_argument("--init-db", action="store_true")
+def main():
+    """Main deployment orchestration."""
+    parser = argparse.ArgumentParser(description="LLM Chatbot Deployment Orchestrator")
+    parser.add_argument("--model", required=True, help="HuggingFace model name or path")
+    parser.add_argument("--quantization", choices=["awq", "gptq", None], default=None,
+                        help="Quantization method")
+    parser.add_argument("--max-model-len", type=int, default=4096,
+                        help="Maximum model context length")
+    parser.add_argument("--gpu-mem-util", type=float, default=0.9,
+                        help="GPU memory utilization ratio")
+    parser.add_argument("--init-db", action="store_true",
+                        help="Initialize database before starting")
+    parser.add_argument("--api-only", action="store_true",
+                        help="Only start the API server")
+    parser.add_argument("--ray-only", action="store_true",
+                        help="Only deploy Ray Serve model")
+
     args = parser.parse_args()
 
-    start_redis()
+    # 1. Service dependency management
+    if not manage_redis_service("start"):
+        sys.exit("Redis service management failed")
 
-    if args.init_db:
-        init_database()
+    # 2. Database initialization
+    if args.init_db and not init_database():
+        sys.exit("Database initialization failed")
 
+    # 3. Model deployment
     ray_success = True
     if not args.api_only:
-        ray_success = deploy_ray_serve(
-            args.model,
-            args.replicas,
-            args.gpu_memory_util,
-            args.max_model_len
-        )
+        model_config = {
+            "model": args.model,
+            "quantization": args.quantization,
+            "max_model_len": args.max_model_len,
+            "gpu_memory_utilization": args.gpu_mem_util
+        }
+        ray_success = deploy_ray_serve_model(model_config)
 
+    # 4. API server management
     api_process = None
     if not args.ray_only and ray_success:
-        api_process = start_api_server()
+        api_process = manage_api_server("start")
 
-    if ray_success and api_process:
-        try:
-            while True:
-                time.sleep(10)
-                if api_process.poll() is not None:
-                    logger.error("API server died, restarting...")
-                    api_process = start_api_server()
-        except KeyboardInterrupt:
-            logger.info("\nShutting down...")
-            if api_process:
-                api_process.terminate()
-            if not args.api_only:
-                serve.shutdown()
-                ray.shutdown()
+    # 5. Process monitoring and cleanup
+    try:
+        while ray_success and api_process and api_process.poll() is None:
+            time.sleep(5)
+    except KeyboardInterrupt:
+        logger.info("\nShutting down services...")
+        if api_process:
+            manage_api_server("stop")
+        if not args.api_only:
+            serve.shutdown()
+            ray.shutdown()
+        manage_redis_service("stop")
+        logger.info("All services stopped")
+
+if __name__ == "__main__":
+    main()
