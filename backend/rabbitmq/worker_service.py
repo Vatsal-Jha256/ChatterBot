@@ -8,20 +8,21 @@ import asyncio
 from typing import Dict, Any
 
 # Import the required modules
-from rabbitmq_service import RabbitMQConsumer, RabbitMQPublisher, CHAT_QUEUE, RESPONSE_QUEUE, BATCH_QUEUE
+from backend.rabbitmq.rabbitmq_service import RabbitMQConsumer, RabbitMQPublisher, CHAT_QUEUE, RESPONSE_QUEUE, BATCH_QUEUE
 import requests
 import aiohttp
 
 # Import database and redis services
-from db_service import ChatHistoryService, get_db
+from backend.database.db_service import ChatHistoryService, get_db
 import redis.asyncio as redis
-
+from backend.core.api.dependencies import get_redis_client
+from backend.core.services.ray_service import handle_ray_request
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-RAY_SERVE_URL = os.getenv('RAY_SERVE_URL', 'http://localhost:8000/RayLLMInference')
+RAY_SERVE_URL = os.getenv('RAY_SERVE_URL', 'http://localhost:8000/generate')
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
 REDIS_DB = int(os.getenv('REDIS_DB', 0))
@@ -32,34 +33,6 @@ redis_pool = redis.ConnectionPool(
     port=REDIS_PORT, 
     db=REDIS_DB
 )
-
-async def get_redis_client():
-    """Get Redis client from pool"""
-    return redis.Redis(connection_pool=redis_pool)
-
-async def call_ray_serve(payload: Dict[str, Any]):
-    """Make async request to Ray Serve endpoint"""
-    try:
-        # In production, use aiohttp for better async performance
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.post(RAY_SERVE_URL, json=payload) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
-                    logger.error(f"Ray Serve error: {response.status}")
-                    return {"response": "Error communicating with LLM service."}
-    except ImportError:
-        # Fallback to requests (synchronous)
-        response = requests.post(RAY_SERVE_URL, json=payload)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            logger.error(f"Ray Serve error: {response.status_code}")
-            return {"response": "Error communicating with LLM service."}
-    except Exception as e:
-        logger.error(f"Ray Serve call error: {e}")
-        return {"response": "Error communicating with LLM service."}
 
 async def get_user_context(user_id: str, conversation_id=None):
     """Get user context from Redis or database"""
@@ -79,7 +52,7 @@ async def get_user_context(user_id: str, conversation_id=None):
             # Attempt decompression if needed
             if len(cached_context) > 100 or cached_context.startswith('eJ'):
                 try:
-                    from api_server import decompress_text
+                    from backend.core.utils.compression import decompress_text
                     decompressed = decompress_text(cached_context)
                     return json.loads(decompressed)
                 except:
@@ -98,7 +71,7 @@ async def get_user_context(user_id: str, conversation_id=None):
             
             # If found in database, update Redis cache
             if context:
-                from api_server import compress_text
+                from backend.core.utils.compression import compress_text
                 compressed_context = compress_text(json.dumps(context))
                 await redis_client.setex(cache_key, 3600, compressed_context)
                 
@@ -125,7 +98,7 @@ async def update_context(user_id: str, user_message: str, assistant_response: st
         ])[-6:]  # Keep last 3 exchanges
         
         # Store with compression in Redis
-        from api_server import compress_text
+        from backend.core.utils.compression import compress_text
         compressed_context = compress_text(json.dumps(updated_context))
         cache_key = f"context_cache:{user_id}"
         if conversation_id:
@@ -273,7 +246,7 @@ async def process_chat_task(task_data):
             }
             
             # Call LLM service
-            result = await call_ray_serve(ray_payload)
+            result = await handle_ray_request(ray_payload)
             
             # Extract response
             valid_response = result.get("response", "I apologize, but I couldn't generate a meaningful response.")

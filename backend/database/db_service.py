@@ -5,7 +5,7 @@ from sqlalchemy import desc, func
 from contextlib import contextmanager
 
 # Import sharded models
-from db_models import ShardRegistry, ShardConfig, User, Conversation, Message
+from backend.database.db_models import ShardRegistry, ShardConfig, User, Conversation, Message
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

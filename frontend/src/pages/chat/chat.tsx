@@ -6,7 +6,6 @@ import { message } from "../../interfaces/interfaces";
 import { Overview } from "@/components/custom/overview";
 import { Header } from "@/components/custom/header";
 import { v4 as uuidv4 } from 'uuid';
-import ReactMarkdown from 'react-markdown';
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8001";
 const API_KEY = import.meta.env.VITE_API_KEY || "apitest1729";
