@@ -1,0 +1,9 @@
+frontend/node_modules/
+*.db
+backend/rabbitmq/rabbitmqadmin
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/__pycache__/
+__pycache__/
