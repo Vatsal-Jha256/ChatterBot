@@ -651,11 +651,7 @@ locust -f locustfile.py --host=http://localhost:8001
 
 ### Performance Benchmarks
 
-Based on load testing with the above configuration, the system achieves:
-- **Throughput:** 50-100 requests/second per instance
-- **Latency:** <500ms for first token generation
-- **Concurrent Users:** Supports 10,000+ with appropriate scaling
-- **Cost Efficiency:** Average cost of $0.002 per chat interaction
+Initial load testing with streaming showed that the system performed with low latency. However, some bottlenecks were observed. The architecture was tested on an NVIDIA 4060 with 8GB VRAM. Rate limiting caused a significant number of failures, despite the device being pushed to its limits. In a production environment, this issue could be effectively mitigated using multiple replicas and a load balancer.
 
 ## Technical Decisions
 
