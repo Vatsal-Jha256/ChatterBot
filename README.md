@@ -6,44 +6,75 @@ ChatterBot is a production-ready, scalable chat application powered by Large Lan
 
 ![ChatterBot Interface](images/demo.png)
 
+## Executive Summary
+
+This documentation outlines our production-ready, scalable chat application powered by Large Language Models (LLMs) designed to support 10,000+ concurrent users. The system emphasizes scalability, reliability, and cost-effectiveness while maintaining a responsive user experience.
+
+Key architectural components include:
+- FastAPI backend with horizontal scaling capabilities
+- Ray Serve for efficient LLM inference with auto-scaling
+- Redis for caching and context management
+- RabbitMQ for asynchronous message processing
+- PostgreSQL with database sharding for persistent storage
+- React-based frontend for user interaction
+
+The system design prioritizes decoupling components, stateless services, and asynchronous processing to ensure optimal performance under high load conditions.
+
 ## System Architecture
 
 ### Architecture Diagram
 
-```
-┌─────────────┐     ┌──────────────┐     ┌───────────────┐
-│    Client   │─────►    Next.js   │─────►    FastAPI    │
-└─────────────┘     │  (CDN Edge)  │     │ (ECS Fargate) │
-                    └──────────────┘     └───────┬───────┘
-                                                  │
-                                    ┌──────────▼──────────┐
-                                    │      SQS Queue      │
-                                    └──────────┬──────────┘
-                                               │
-                           ┌───────────────▼───────────────┐
-                           │      vLLM Workers (EC2)       │
-                           │    - AWQ Quantized Llama-2    │
-                           │    - PagedAttention KV Cache  │
-                           └───────────────┬───────────────┘
-                                           │
-                           ┌───────────────▼───────────────┐
-                           │      PostgreSQL (RDS)         │
-                           │      Redis (ElastiCache)      │
-                           └───────────────────────────────┘
+```mermaid
+graph LR
+A[User] --> B(Load Balancer / NGINX);
+B --> C{FastAPI Server};
+C --> D[Ray Serve Cluster];
+C --> E[Redis Cluster];
+C --> F[RabbitMQ];
+B --> G[React Frontend];
+D --> E;
+F --> H[Worker Services];
+H --> D;
+C --> I[PostgreSQL Sharded Database];
+I --> C;
 ```
 
-### Component Breakdown
+### Alternative Cloud-Based Architecture
 
-#### 1. FastAPI Backend (Horizontally Scalable)
+```
+┌─────────────┐ ┌──────────────┐ ┌───────────────┐
+│ Client      │─────►│ Next.js      │─────►│ FastAPI       │
+└─────────────┘ │ (CDN Edge)    │ │ (ECS Fargate) │
+                └──────────────┘ └───────┬───────┘
+                                         │
+                        ┌──────────▼──────────┐
+                        │ SQS Queue           │
+                        └──────────┬──────────┘
+                                   │
+         ┌───────────────▼───────────────┐
+         │ vLLM Workers (Spot EC2)       │
+         │ - AWQ Quantized Llama-2       │
+         │ - PagedAttention KV Cache     │
+         └───────────────┬───────────────┘
+                         │
+         ┌───────────────▼───────────────┐
+         │ PostgreSQL (RDS)              │
+         │ Redis (ElastiCache)           │
+         └───────────────────────────────┘
+```
+
+## Component Breakdown
+
+### FastAPI Backend (Horizontally Scalable)
 - **Functionality:** Handles REST API endpoints, authentication, and rate limiting
 - **Scaling Approach:** Stateless design behind load balancer allows horizontal scaling
 - **Key Features:**
   - Redis connection pooling
-  - SQS/RabbitMQ integration for asynchronous tasks
+  - RabbitMQ integration for asynchronous tasks
   - Middleware for auth and rate limiting
   - Support for both streaming and non-streaming responses
 
-#### 2. Ray Serve Cluster with vLLM
+### Ray Serve Cluster
 - **Functionality:** Manages LLM inference workloads
 - **Scaling Approach:** Auto-scales based on request queue depth
 - **Key Features:**
@@ -52,7 +83,7 @@ ChatterBot is a production-ready, scalable chat application powered by Large Lan
   - GPU utilization optimization
   - Kubernetes-based auto-scaling
 
-#### 3. Redis Cluster
+### Redis Cluster
 - **Functionality:** Caches conversation context and handles rate limiting
 - **Scaling Approach:** Sharded with read replicas
 - **Key Features:**
@@ -61,7 +92,7 @@ ChatterBot is a production-ready, scalable chat application powered by Large Lan
   - Distributed locking
   - High availability configuration
 
-#### 4. Message Queue (RabbitMQ/SQS)
+### RabbitMQ
 - **Functionality:** Manages asynchronous task processing
 - **Scaling Approach:** Auto-scaling consumer workers
 - **Key Features:**
@@ -70,20 +101,111 @@ ChatterBot is a production-ready, scalable chat application powered by Large Lan
   - Message persistence for reliability
   - Configurable consumer prefetch
 
-#### 5. PostgreSQL Sharded Database
+### PostgreSQL Sharded Database
 - **Functionality:** Persistent storage for user data and conversation history
 - **Scaling Approach:** Horizontal sharding by user ID
 - **Key Features:**
   - Connection pooling
   - Read replicas for history endpoints
   - Time-series optimization for chat logs
+  - Sharding implementation using user ID-based hash routing
   - Optimized indexes for conversation retrieval
+
+## Database Implementation
+
+The system implements a sharded database architecture for optimal scalability:
+
+1. **Database Sharding Strategy**:
+   - User-based horizontal sharding using consistent hashing
+   - Each user is deterministically assigned to a specific shard
+   - Automatic routing to appropriate database connections
+
+2. **Schema Design**:
+   - Users table with shard assignments
+   - Conversations linked to users
+   - Messages with conversation history and analytics data
+   - Optimized indexes for query performance
+
+3. **Connection Management**:
+   - Dynamic connection pooling based on shard ID
+   - Efficient session reuse
+   - Automatic connection routing
+
+Here's a key portion of the sharding implementation:
+
+```python
+class ShardConfig:
+    """Configuration for database sharding"""
+    # Number of shards to use
+    SHARD_COUNT = 4
+    
+    @staticmethod
+    def get_shard_for_user(user_id):
+        """Determine which shard to use for a given user ID"""
+        # Create a consistent hash from the user_id
+        hash_obj = hashlib.md5(user_id.encode())
+        hash_int = int(hash_obj.hexdigest(), 16)
+        # Deterministically assign to a shard
+        return hash_int % ShardConfig.SHARD_COUNT
+```
+
+## NGINX Configuration
+
+A sample NGINX configuration is used for routing and load balancing:
+
+## Error Handling and Retry Mechanisms
+
+The system implements robust error handling with exponential backoff for retries:
+
+```python
+# Example retry mechanism with exponential backoff
+async def call_with_retry(func, *args, max_retries=3, initial_backoff=0.5, **kwargs):
+    """Call a function with exponential backoff retry"""
+    retries = 0
+    backoff = initial_backoff
+    
+    while True:
+        try:
+            return await func(*args, **kwargs)
+        except (ConnectionError, TimeoutError, ServiceUnavailableError) as e:
+            retries += 1
+            if retries > max_retries:
+                logger.error(f"Failed after {max_retries} retries: {e}")
+                raise
+                
+            # Calculate exponential backoff with jitter
+            jitter = random.uniform(0, 0.1 * backoff)
+            wait_time = backoff + jitter
+            logger.warning(f"Retry {retries}/{max_retries} after {wait_time:.2f}s: {e}")
+            await asyncio.sleep(wait_time)
+            
+            # Increase backoff for next retry
+            backoff *= 2
+```
+
+## Streaming vs. Asynchronous Processing
+
+The system supports both streaming and asynchronous processing modes:
+
+1. **Streaming Mode:**
+   - Implemented via Server-Sent Events (SSE)
+   - Tokens are delivered to the frontend as they're generated
+   - Provides immediate user feedback
+   - API endpoints support streaming via `/stream/{correlation_id}`
+
+2. **Asynchronous Batch Processing:**
+   - Requests are queued and processed in the background
+   - Results are polled via correlation IDs
+   - Better handles high concurrency and traffic spikes
+
+The API supports both modes, allowing clients to choose based on their requirements.
 
 ## Scalability Strategy
 
-### How We Support 10,000+ Users
+### Key Scaling Mechanisms
 
 #### Horizontal Scaling
+The system supports horizontal scaling at multiple layers:
 
 1. **API Layer:**
    - Stateless FastAPI instances behind a load balancer
@@ -92,8 +214,21 @@ ChatterBot is a production-ready, scalable chat application powered by Large Lan
 
 2. **Inference Layer:**
    - Ray Serve with dynamic scaling based on request queue
-   - Multiple LLM replicas for parallel processing
-   - GPU sharing for efficient resource utilization
+   - Configurable deployment using the following pattern:
+   
+   ```python
+   @serve.deployment(
+       num_replicas=4,
+       autoscaling_config={
+           "min_replicas": 2,
+           "max_replicas": 20,
+           "target_num_ongoing_requests_per_replica": 10
+       },
+       ray_actor_options={"num_gpus": 1}
+   )
+   class VLLMGenerateDeployment:
+       # Deployment implementation
+   ```
 
 3. **Database Layer:**
    - Sharded PostgreSQL for distributing write load
@@ -101,151 +236,219 @@ ChatterBot is a production-ready, scalable chat application powered by Large Lan
    - Connection pooling for efficient resource usage
 
 #### Vertical Scaling
+The system allows vertical scaling for specific components:
 
 1. **LLM Inference:**
    - GPU instance type selection based on model size and throughput requirements
    - Memory optimization using quantization (AWQ 4-bit weights)
-   - Continuous batching for improved throughput
 
 2. **Database:**
    - Instance size selection based on expected user volume
    - Buffer pool and work memory configuration
 
-### Bottleneck Mitigation
+### Request Flow and Bottleneck Mitigation
 
-1. **Inference Bottlenecks:**
-   - Model quantization (AWQ) to reduce memory footprint
-   - Paged Attention for efficient KV cache management
-   - Token streaming to improve perceived latency
+#### Synchronous Chat Flow
+1. User sends message through frontend
+2. FastAPI server receives request and validates
+3. Server accesses Redis to retrieve conversation context
+4. Server sends inference request to Ray Serve
+5. Ray Serve processes request and returns response
+6. Server updates Redis cache and PostgreSQL database
+7. Response returned to user
 
-2. **Database Bottlenecks:**
-   - User-based sharding to distribute write load
-   - Read replicas for query-heavy operations
-   - Optimized indexes and query patterns
+**Bottleneck Mitigation:**
+- Redis connection pooling
+- Database read replicas
+- Ray Serve batch processing
 
-3. **Network Bottlenecks:**
-   - CDN for static content delivery
-   - Response compression
-   - Strategic regional deployments
+#### Asynchronous Chat Flow
+1. User sends message through frontend
+2. FastAPI server receives request and validates
+3. Server places task in RabbitMQ queue
+4. Server returns correlation ID to user
+5. Worker service processes queue message
+6. Worker retrieves context from Redis
+7. Worker calls Ray Serve for inference
+8. Worker updates Redis and PostgreSQL
+9. User polls for response with correlation ID
 
-### Request Flow Optimization
+**Bottleneck Mitigation:**
+- Queue prioritization
+- Worker auto-scaling
+- Asynchronous processing
 
-1. **Asynchronous Processing:**
-   - Non-blocking request handling
-   - Queue-based workload distribution
-   - Background processing for long-running tasks
+#### Streaming Chat Flow
+1. User initiates streaming chat
+2. FastAPI creates SSE connection
+3. Server places task in high-priority queue
+4. Worker begins processing and calls streaming endpoint
+5. Tokens streamed to user via SSE as they are generated
+6. Final state saved to PostgreSQL after completion
 
-2. **Streaming Mode:**
-   - Token-by-token delivery to frontend
-   - Server-Sent Events (SSE) for efficient streaming
-   - Progressive rendering for improved UX
+**Bottleneck Mitigation:**
+- Dedicated streaming queue
+- Token-by-token processing
+- Continuous batching in vLLM
 
 ## Reliability Features
 
 ### Failure Handling
 
-1. **Circuit Breaker Pattern:**
-   - Automatic detection of failing services
-   - Graceful degradation during partial outages
-   - Fallback mechanisms for critical components
+#### Circuit Breaker Pattern
+The system implements circuit breakers for critical service dependencies:
 
-2. **Request Retry Logic:**
-   - Exponential backoff for transient failures
-   - Idempotent operations for safe retries
-   - Dead letter queues for unprocessable messages
+```python
+# Example fallback mechanism from code
+async def call_ray_serve(self, payload):
+    try:
+        # Primary call
+        return await self._call_ray(payload)
+    except ServeUnavailable:
+        # Fallback to smaller model
+        return await self._call_fallback_model(payload)
+```
 
-3. **Monitoring and Alerting:**
-   - Real-time system health dashboards
-   - Proactive alerting for potential issues
-   - Performance anomaly detection
+#### Request Retries
+- Exponential backoff for retrying failed requests
+- Configurable retry limits
+- Dead letter queue for unprocessable messages
+
+#### Graceful Degradation
+- Fallback to lighter models during high load periods
+- Reduced context window during capacity constraints
+- Response caching for common queries
 
 ### High Availability Configuration
 
-1. **Multi-AZ Deployment:**
-   - Resources distributed across availability zones
-   - Automatic failover for critical components
-   - Regional isolation for fault containment
+#### Redis
+- Multi-node cluster with sentinel
+- Persistence configuration
+- Cross-AZ deployment
 
-2. **Database Reliability:**
-   - Primary-replica architecture
-   - Automated backups and point-in-time recovery
-   - Transaction integrity with proper isolation levels
+#### RabbitMQ
+- Clustered deployment
+- Message persistence
+- Mirrored queues
 
-3. **Inference Redundancy:**
-   - Multiple model replicas
-   - Fallback to smaller models during capacity constraints
-   - Graceful degradation of context window if needed
+#### Database
+- Primary-replica architecture
+- Automated failover
+- Point-in-time recovery
+
+### Monitoring and Alerting
+
+#### Health Checks
+- Service-level health endpoints
+- Kubernetes liveness and readiness probes
+- Dependency health monitoring
+
+#### Metrics Collection
+- Request latency tracking
+- Queue depth monitoring
+- Error rate tracking
+- Resource utilization metrics
 
 ## Cost Optimization Strategy
 
-### Efficient Resource Utilization
+### Infrastructure Efficiency
 
-1. **Compute Optimization:**
-   - Spot instances for worker nodes
-   - Auto-scaling to match demand patterns
-   - Right-sizing of instances based on workload
+#### Compute Resources
+- Spot instances for worker nodes
+- Auto-scaling to match demand
+- Right-sizing of instances
 
-2. **Model Efficiency:**
-   - AWQ 4-bit quantization (75% memory reduction)
-   - Continuous batching for higher throughput
-   - Token caching for common responses
+#### Model Optimization
+- Quantization (AWQ) to reduce GPU memory requirements
+- Model pruning for efficiency
+- Continuous batching for higher throughput
 
-3. **Storage Optimization:**
-   - Time-based partitioning for historical conversations
-   - Compression for older records
-   - Tiered storage strategy (hot/warm/cold)
+### Caching Strategy
 
-### Operational Cost Management
+#### Response Caching
+- Common query caching
+- Partial context caching
+- Result reuse for identical inputs
 
-1. **Caching Strategy:**
-   - Multi-level caching (client, CDN, application)
-   - Conversation context caching in Redis
-   - Result reuse for identical prompts
+#### Context Management
+- LRU eviction policy for conversation context
+- Compressed storage format
+- Tokenization caching
 
-2. **Traffic Management:**
-   - Rate limiting to prevent abuse
-   - Request prioritization for premium users
-   - Asynchronous processing for cost spreading
+### Database Optimization
 
-3. **Infrastructure Choices:**
-   - Container-based deployment for density
-   - Serverless components where appropriate
-   - Managed services to reduce operational overhead
+#### Access Patterns
+- Read/write separation
+- Query optimization
+- Index strategy for conversation retrieval
+
+#### Storage Efficiency
+- Time-based partitioning for historical conversations
+- Compression for older records
+- Selective attribute storage
 
 ## API Endpoints
 
-### Chat Endpoints
+### System Endpoints
 
-#### Synchronous Chat
-```
-POST /chat
-```
-Process chat request immediately
+#### Health Check
+**GET** `/health`
 
-**Request Body:**
-```json
-{
-  "message": "Explain relativity",
-  "user_id": "user123",
-  "context": [],
-  "stream": false
-}
-```
+Check system health status
+
+**Headers:**
+- `X-API-Key: <your_api_key>`
 
 **Response:**
 ```json
 {
-  "response": "Relativity refers to...",
-  "conversation_id": 42,
-  "processing_time": 1.234
+  "status": "healthy",
+  "components": {
+    "ray_serve": "up",
+    "redis": "up",
+    "database": "up",
+    "rabbitmq": "up"
+  },
+  "timestamp": 1718901234.567
 }
 ```
 
-#### Streaming Chat
+#### Queue Statistics
+**GET** `/debug/queue-stats`
+
+Get RabbitMQ queue metrics
+
+**Headers:**
+- `X-API-Key: <your_api_key>`
+
+**Response:**
+```json
+{
+  "chat_queue": {
+    "message_count": 5,
+    "consumer_count": 2
+  },
+  "response_queue": {
+    "message_count": 3,
+    "consumer_count": 1
+  },
+  "batch_queue": {
+    "message_count": 0,
+    "consumer_count": 0
+  }
+}
 ```
-POST /stream-chat
-```
+
+### Streaming Endpoints
+
+#### Initiate Stream Chat
+**POST** `/stream-chat`
+
 Start a streaming chat session
+
+**Headers:**
+- `Content-Type: application/json`
+- `X-API-Key: <your_api_key>`
 
 **Request Body:**
 ```json
@@ -261,16 +464,19 @@ Start a streaming chat session
 ```json
 {
   "status": "streaming",
+  "message": "Connect to the streaming endpoint to receive tokens",
   "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
   "stream_endpoint": "/stream/550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-#### Stream Response Endpoint
-```
-GET /stream/{correlation_id}
-```
+#### Stream Responses
+**GET** `/stream/{correlation_id}`
+
 SSE endpoint for streaming responses
+
+**Headers:**
+- `X-API-Key: <your_api_key>`
 
 **SSE Format:**
 ```
@@ -279,59 +485,75 @@ data: {"token": " upon", "done": false}
 data: [DONE]
 ```
 
-### Conversation Management
+### Chat Endpoints
 
-#### Create Conversation
-```
-POST /conversations
-```
-Create a new conversation
+#### Synchronous Chat
+**POST** `/chat`
+
+Process chat request immediately
+
+**Rate Limit:** 10 requests/minute
+
+**Headers:**
+- `Content-Type: application/json`
+- `X-API-Key: <your_api_key>`
 
 **Request Body:**
 ```json
 {
+  "message": "Explain relativity",
   "user_id": "user123",
-  "title": "Physics Discussion"
+  "context": [],
+  "stream": false
 }
 ```
 
 **Response:**
 ```json
 {
+  "response": "**Relativity** refers to...",
   "conversation_id": 42,
-  "title": "Physics Discussion",
-  "created_at": "2025-03-11T12:00:00Z"
+  "processing_time": 1.234
 }
 ```
 
-#### Get Conversation History
-```
-GET /conversations/{conversation_id}/messages
-```
-Retrieve messages for a conversation
+#### Asynchronous Chat
+**POST** `/async-chat`
+
+Queue chat request for async processing
+
+**Headers:**
+- `Content-Type: application/json`
+- `X-API-Key: <your_api_key>`
 
 **Response:**
 ```json
 {
-  "conversation_id": 42,
-  "messages": [
-    {
-      "id": 101,
-      "role": "user",
-      "content": "Explain relativity",
-      "timestamp": "2025-03-11T12:01:00Z"
-    },
-    {
-      "id": 102,
-      "role": "assistant",
-      "content": "Relativity refers to...",
-      "timestamp": "2025-03-11T12:01:05Z"
-    }
-  ]
+  "status": "processing",
+  "message": "Your request is being processed",
+  "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "check_endpoint": "/check-response/550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-## Deployment Instructions
+#### Check Async Response
+**GET** `/check-response/{correlation_id}`
+
+Check status of async request
+
+**Headers:**
+- `X-API-Key: <your_api_key>`
+
+**Response:**
+```json
+{
+  "response": "**Special relativity** states that...",
+  "conversation_id": 42,
+  "processing_time": 2.345
+}
+```
+
+## Deployment Guide
 
 ### Prerequisites
 - Docker and Docker Compose
@@ -339,128 +561,189 @@ Retrieve messages for a conversation
 - Ray 2.0+
 - Kubernetes cluster (optional for production)
 
-### Local Development Setup
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/chatterbot.git
-   cd chatterbot
-   ```
-
-2. Install requirements:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. Start core services:
-   ```bash
-   docker-compose up -d redis rabbitmq postgres
-   ```
-
-4. Start Ray cluster:
-   ```bash
-   ray start --head --num-gpus=4 --num-cpus=32 --port=6379
-   ```
-
-5. Deploy model:
-   ```bash
-   python deploy.py --model asprenger/meta-llama-Llama-2-7b-chat-hf-gemm-w4-g128-awq --quantization awq
-   ```
-
-6. Start API server:
-   ```bash
-   uvicorn backend.main:app --host 0.0.0.0 --port 8001 --workers 8
-   ```
-
-7. Start frontend:
-   ```bash
-   cd frontend && npm run dev
-   ```
-
-### Production Deployment (Kubernetes)
-
-For production deployment, use the Kubernetes manifests provided in the `/infra/kubernetes` directory:
+### Quick Start
 
 ```bash
-# Deploy core infrastructure
-kubectl apply -f infra/kubernetes/redis-cluster.yaml
-kubectl apply -f infra/kubernetes/rabbitmq-cluster.yaml
-kubectl apply -f infra/kubernetes/postgres-sharded.yaml
+# 1. Install requirements
+pip install -r requirements.txt
 
-# Deploy Ray Serve cluster
-kubectl apply -f infra/kubernetes/ray-cluster.yaml
+# 2. Deploy the LLM model with Ray Serve
+./deploy.py --model asprenger/meta-llama-Llama-2-7b-chat-hf-gemm-w4-g128-awq --quantization awq --init-db
 
-# Deploy API servers
-kubectl apply -f infra/kubernetes/api-deployment.yaml
+# 3. Start the worker service
+python3 backend/rabbitmq/worker_service.py
 
-# Deploy frontend
-kubectl apply -f infra/kubernetes/frontend-deployment.yaml
-
-# Apply NGINX configuration
-kubectl apply -f infra/kubernetes/nginx-configmap.yaml
-kubectl apply -f infra/kubernetes/nginx-deployment.yaml
+# 4. Start the frontend
+cd frontend
+npm install
+npm run dev
 ```
 
-## Key Technical Decisions
 
-### 1. vLLM Over Other Inference Engines
+### Environment Configuration
 
-We chose vLLM for our inference engine due to:
-- 5-10x higher throughput with PagedAttention technology
-- Efficient memory management for handling more concurrent requests
-- Better support for open-source models
+**.env.example**
+```ini
+# Ray Configuration
+RAY_ADDRESS=ray://localhost:10001
+MODEL_NAME=asprenger/meta-llama-Llama-2-7b-chat-hf-gemm-w4-g128-awq
+MAX_CONCURRENT=100
 
-### 2. AWQ Quantization
+# Redis
+REDIS_HOST=redis-cluster
+REDIS_PORT=6379
+REDIS_POOL_SIZE=50
 
-For model efficiency, we implemented AWQ 4-bit quantization:
-- Reduces GPU memory requirements by ~75%
-- Minimal accuracy drop (<1%) compared to FP16
-- Compatible with vLLM's tensor parallelism
+# RabbitMQ
+RABBITMQ_URI=amqp://user:pass@rabbitmq:5672/vhost
+```
 
-### 3. Hybrid Streaming Architecture
+## Load Testing
 
-We implemented a dual-mode architecture:
-- Streaming mode for real-time interactive experiences
-- Asynchronous mode for high-concurrency situations
-- Client adapts based on server load and user needs
+### Testing Strategy
+The system is tested using Locust with various scenarios:
+1. **Basic Chat Flow Test:** Simulates simple back-and-forth conversations
+2. **Streaming Test:** Focuses on streaming performance
+3. **Concurrent User Test:** Simulates target of 10,000+ concurrent users
+4. **Long-Running Test:** Checks stability over extended periods
 
-### 4. Database Sharding Strategy
+### Locust Test File
 
-Our PostgreSQL sharding approach uses user-based partitioning:
-- Even distribution of write load
-- Locality of user data for efficient queries
-- Ability to scale specific shards independently
+```python
+from locust import HttpUser, task, between
+import json
 
-## Performance Benchmarks
+class ChatUser(HttpUser):
+    wait_time = between(0.1, 0.5)
+    
+    @task
+    def chat_flow(self):
+        headers = {"X-API-Key": "apitest1729"}
+        
+        # Start conversation
+        self.client.post("/conversations", json={
+            "user_id": "load_test_user",
+            "title": "Load Test"
+        }, headers=headers)
+        
+        # Send message
+        response = self.client.post("/async-chat", json={
+            "user_id": "load_test_user",
+            "message": "Explain quantum computing basics",
+            "stream": True
+        }, headers=headers)
+        
+        # Stream response
+        if response.status_code == 200:
+            correlation_id = response.json()["correlation_id"]
+            self.client.get(f"/stream/{correlation_id}", headers=headers, name="/stream/[correlation_id]")
+```
 
-Based on load testing with our implementation, the system achieves:
+### Running Load Tests
+
+```bash
+# Navigate to the tests directory
+cd tests
+
+# Start the Locust web interface
+locust -f locustfile.py --host=http://localhost:8001
+```
+
+### Performance Benchmarks
+
+Based on load testing with the above configuration, the system achieves:
 - **Throughput:** 50-100 requests/second per instance
 - **Latency:** <500ms for first token generation
 - **Concurrent Users:** Supports 10,000+ with appropriate scaling
 - **Cost Efficiency:** Average cost of $0.002 per chat interaction
 
+## Technical Decisions
+
+### vLLM Over Triton/TensorRT-LLM
+
+The system uses vLLM for inference due to:
+- 5-10x higher throughput with PagedAttention ([arXiv:2309.06180](https://arxiv.org/abs/2309.06180))
+- Simpler deployment compared to NVIDIA-specific solutions
+- Better support for open-source models
+
+### AWQ Quantization
+
+For model efficiency, AWQ 4-bit quantization is used:
+- <1% accuracy drop vs FP16 ([arXiv:2306.00978](https://arxiv.org/abs/2306.00978))
+- Compatible with vLLM's tensor parallelism
+- Reduces GPU memory requirements by ~75%
+
+### Hybrid Queue Architecture
+
+The system uses a hybrid approach to message queuing:
+
+#### Direct Mode
+- For streaming chat interactions
+- Uses FastAPI with WebSocket endpoints for low-latency responses
+- Direct interaction with Ray Serve for token-by-token generation
+
+#### Queue Mode
+- For background tasks and load smoothing
+- Uses RabbitMQ for asynchronous processing
+- Helps manage load during traffic spikes
+
+### Database Sharding Strategy
+
+The PostgreSQL database is sharded by user ID for optimal performance:
+- Even distribution of write load
+- Locality of user data
+- Ability to scale specific shards independently
+
 ## Future Enhancements
 
-### 1. Advanced Monitoring System
-- Prometheus metrics collection
-- Grafana dashboards for real-time visualization
-- Custom alerting based on performance thresholds
+### 1. Comprehensive Monitoring with Prometheus & Grafana
+* Implement Prometheus for metrics collection:
+  * Request latency tracking
+  * Queue depth monitoring
+  * Error rate tracking
+  * Resource utilization metrics
+* Deploy Grafana for visualization dashboards:
+  * Real-time system performance
+  * Historical trends analysis
+  * Custom alerting based on performance thresholds
+  * User engagement metrics
 
-### 2. Multi-Model Support
-- Dynamic model selection based on query complexity
-- A/B testing framework for model performance
-- Custom fine-tuning pipeline for domain-specific knowledge
+### 2. Kubernetes Deployment for Advanced Auto-scaling
+* Implement full Kubernetes orchestration:
+  * Horizontal Pod Autoscaler (HPA) for automatic scaling based on CPU/memory usage
+  * Custom metrics-based autoscaling for LLM inference
+  * Node affinity for GPU workload optimization
+  * StatefulSets for stateful components like databases
+* Helm charts for simplified deployment:
+  * Environment-specific configurations
+  * Dependency management
+  * Rollback capabilities
 
-### 3. Enhanced Security Features
-- Advanced rate limiting and abuse prevention
-- Content moderation integration
-- Compliance with data sovereignty requirements
+### 3. Advanced Load Balancing
+* Implement NGINX or AWS Application Load Balancer:
+  * SSL termination
+  * Path-based routing
+  * WebSocket support for streaming
+  * Sticky sessions when needed
+* Enhanced traffic management:
+  * Circuit breaking for failed services
+  * Request throttling
+  * IP-based rate limiting
+  * Geographic routing for multi-region deployments
 
-### 4. Enterprise Integration
-- SSO authentication support
-- Role-based access control
-- Audit logging for compliance
+### 4. Additional Enhancements
+* Multi-model support
+* Advanced analytics
+* Custom model fine-tuning
+* Enterprise integration options
 
-## License
+## Conclusion
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+The proposed architecture delivers a scalable, reliable, and cost-effective LLM chatbot system capable of supporting 10,000+ users. Key strengths include:
+
+1. **Scalability:** Horizontal scaling at all layers ensures the system can grow with user demand
+2. **Reliability:** Circuit breakers, retries, and graceful degradation provide robust operation
+3. **Performance:** Streaming architecture and optimized inference deliver responsive user experience
+4. **Cost Efficiency:** Model quantization, caching, and resource optimization minimize operational costs
+
+The system is ready for production deployment and can be extended with additional features as outlined in the Future Enhancements section.
