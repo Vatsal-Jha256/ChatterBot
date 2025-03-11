@@ -492,7 +492,7 @@ data: [DONE]
 
 Process chat request immediately
 
-**Rate Limit:** 10 requests/minute
+**Rate Limit:** 20 requests/minute
 
 **Headers:**
 - `Content-Type: application/json`
