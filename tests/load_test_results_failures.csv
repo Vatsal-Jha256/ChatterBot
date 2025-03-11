@@ -1,0 +1,4 @@
+Method,Name,Error,Occurrences
+POST,/stream-chat,RemoteDisconnected('Remote end closed connection without response'),19427
+POST,/stream-chat,"ConnectionResetError(104, 'Connection reset by peer')",19523
+POST,/stream-chat,HTTPError('429 Client Error: Too Many Requests for url: /stream-chat'),471947

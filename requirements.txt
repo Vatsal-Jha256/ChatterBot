@@ -9,7 +9,6 @@ uvicorn
 aiohttp
 uuid
 jsonschema
-logging
 requests
 aio_pika
 asyncio
@@ -19,9 +18,4 @@ python-dotenv
 starlette
 vllm
 pyyaml
-functools
-os
-prometheus_client
-prometheus-fastapi-instrumentator
-docker.io 
-docker-compose
+locust

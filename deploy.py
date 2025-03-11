@@ -155,10 +155,12 @@ def manage_api_server(action="start"):
     try:
         if action == "start":
             logger.info("Starting API server")
+            # Create a log file for the API server
+            api_log_file = open("api_server.log", "w")
             api_process = subprocess.Popen(
                 [sys.executable, api_script],
                 env=os.environ.copy(),
-                stdout=subprocess.PIPE,
+                stdout=api_log_file,
                 stderr=subprocess.STDOUT,
                 text=True
             )
@@ -167,7 +169,13 @@ def manage_api_server(action="start"):
             start_time = time.time()
             while time.time() - start_time < DEFAULT_CONFIG["healthcheck_timeout"]:
                 if api_process.poll() is not None:
-                    break
+                    # Process exited prematurely
+                    logger.error(f"API server process exited with code {api_process.returncode}")
+                    api_log_file.close()
+                    with open("api_server.log", "r") as f:
+                        logger.error(f"API server output: {f.read()}")
+                    return None
+                
                 try:
                     response = requests.get(
                         f"http://{DEFAULT_CONFIG['api_host']}:{DEFAULT_CONFIG['api_port']}/docs",

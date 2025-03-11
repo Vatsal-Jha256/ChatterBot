@@ -6,12 +6,8 @@ import time
 import uuid
 import asyncio
 from typing import Dict, Any, Optional
-
-# Import the required modules
 from backend.rabbitmq.rabbitmq_service import RabbitMQConsumer, RabbitMQPublisher, CHAT_QUEUE, RESPONSE_QUEUE, BATCH_QUEUE
 import aiohttp
-
-# Import database and redis services
 from backend.database.db_service import ChatHistoryService, get_db
 import redis.asyncio as redis
 from backend.core.api.dependencies import get_redis_client
@@ -19,6 +15,7 @@ from backend.core.services.ray_service import handle_ray_request
 from backend.core.services.context_service import update_context, get_user_context
 from backend.core.models.api_models import APIRequest
 from backend.core.adapters.ray_adapter import RayServeAdapter
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,15 +29,20 @@ REDIS_DB = int(os.getenv('REDIS_DB', 0))
 # Redis connection pool
 from backend.core.api.dependencies import redis_pool
 
-# Helper function to get a Redis client
-async def get_redis_connection():
-    """Get a Redis client from the connection pool"""
-    return redis.Redis.from_pool(redis_pool)
+# Create a global context for managing event loops
+class LoopContext:
+    def __init__(self):
+        self.loop = None
+        self.redis_client = None
 
+loop_context = LoopContext()
+
+async def get_redis_connection():
+    """Get a Redis client from the connection pool. Always create a new client."""
+    return redis.Redis(connection_pool=redis_pool)
 async def process_chat_task(task_data):
     """Process chat task from RabbitMQ with streaming support"""
     start_time = time.time()
-    
     try:
         # Extract data from task
         correlation_id = task_data.get('correlation_id')
@@ -50,13 +52,13 @@ async def process_chat_task(task_data):
         if not isinstance(payload, APIRequest) and isinstance(payload, dict):
             payload = APIRequest(**payload)
         
-        # Extract fields from payload - use attribute access not dictionary access
+        # Extract fields from payload - use attribute access
         user_id = payload.user_id
         message = payload.message
         conversation_id = payload.conversation_id
-        max_tokens = payload.max_tokens if hasattr(payload, 'max_tokens') else 256
-        temperature = payload.temperature if hasattr(payload, 'temperature') else 0.7
-        stream = payload.stream if hasattr(payload, 'stream') else False
+        max_tokens = getattr(payload, 'max_tokens', 256)
+        temperature = getattr(payload, 'temperature', 0.7)
+        stream = getattr(payload, 'stream', False)
         
         # Validate required fields
         if not user_id or not message:
@@ -64,10 +66,22 @@ async def process_chat_task(task_data):
                 "response": "Missing required fields in request.",
                 "error": "Invalid payload"
             }
-            
+        
         # Get stored context
         redis_client = await get_redis_connection()
-        stored_context = await get_user_context(user_id, redis_client, conversation_id)
+        try:
+            stored_context = await get_user_context(user_id, redis_client, conversation_id)
+        except Exception as context_error:
+            logger.warning(f"Error getting context, continuing without it: {context_error}")
+            stored_context = []
+        
+        # Check if stored_context might be too large and truncate if needed
+        # Estimate tokens (rough approximation)
+        total_token_estimate = sum(len(item.split()) for item in (stored_context or []))
+        if total_token_estimate > 2000:  # Keep context within reasonable limits
+            logger.warning(f"Context too large ({total_token_estimate} est. tokens), truncating")
+            # Keep more recent context by taking the last few items
+            stored_context = stored_context[-4:]  # Keep last 4 items (2 exchanges)
         
         if stream:
             # Handle streaming response
@@ -114,7 +128,7 @@ async def process_chat_task(task_data):
                                     
                                     if token:
                                         response_text += token
-                                        
+                                    
                                     # Publish to RabbitMQ stream
                                     await publisher.publish_message(
                                         queue_name=stream_correlation_id,
@@ -125,7 +139,6 @@ async def process_chat_task(task_data):
                                     
                                     if done:
                                         break
-                                        
                                 except json.JSONDecodeError:
                                     # Not valid JSON, use as raw token
                                     response_text += chunk_str
@@ -139,7 +152,10 @@ async def process_chat_task(task_data):
                             logger.error(f"Error processing chunk: {chunk_error}")
                 
                 # Update context with full response
-                await update_context(user_id, message, response_text, conversation_id)
+                try:
+                    await update_context(user_id, message, response_text, conversation_id)
+                except Exception as ctx_error:
+                    logger.error(f"Context update error (non-critical): {ctx_error}")
                 
                 # Save to database
                 processing_time = time.time() - start_time
@@ -157,10 +173,10 @@ async def process_chat_task(task_data):
                         assistant_token_count=int(assistant_token_count),
                         processing_time=processing_time
                     )
-                    
-                    # Get conversation_id for response
-                    if not conversation_id:
-                        conversation_id = db_result.get("conversation_id")
+                
+                # Get conversation_id for response
+                if not conversation_id:
+                    conversation_id = db_result.get("conversation_id")
                 
                 # Send final done signal
                 await publisher.publish_message(
@@ -177,7 +193,6 @@ async def process_chat_task(task_data):
                     "processing_time": processing_time,
                     "streamed": True
                 }
-                
             except Exception as e:
                 logger.error(f"Stream error: {e}", exc_info=True)
                 # Use stream_correlation_id for both queue_name and correlation_id
@@ -190,7 +205,7 @@ async def process_chat_task(task_data):
                     )
                 except Exception as pub_err:
                     logger.error(f"Failed to publish error message: {pub_err}")
-                    
+                
                 return {
                     "response": "An error occurred during streaming.",
                     "error": str(e)
@@ -220,7 +235,10 @@ async def process_chat_task(task_data):
             valid_response = valid_response[:1000].strip()
             
             # Update context
-            await update_context(user_id, message, valid_response, conversation_id)
+            try:
+                await update_context(user_id, message, valid_response, conversation_id)
+            except Exception as ctx_error:
+                logger.error(f"Context update error (non-critical): {ctx_error}")
             
             # Calculate processing time and token counts
             processing_time = time.time() - start_time
@@ -239,10 +257,10 @@ async def process_chat_task(task_data):
                     assistant_token_count=int(assistant_token_count),
                     processing_time=processing_time
                 )
-                
-                # Get conversation_id for response
-                if not conversation_id:
-                    conversation_id = db_result.get("conversation_id")
+            
+            # Get conversation_id for response
+            if not conversation_id:
+                conversation_id = db_result.get("conversation_id")
             
             # Return response
             return {
@@ -257,82 +275,18 @@ async def process_chat_task(task_data):
             "error": str(e)
         }
 
-def callback_wrapper(message, correlation_id):
-    """Wrap the callback to handle async functions"""
-    logger.info(f"Received task with correlation_id: {correlation_id}")
-    try:
-        # Try to get the current event loop if one is already running
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        # If no event loop exists, create one
-        loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
-        # Add correlation_id to message data for streaming
-        message['correlation_id'] = correlation_id
-        
-        # Process the message
-        function_name = message.get('function')
-        if function_name == 'process_chat':
-            # Run the async function and get the result
-            result = loop.run_until_complete(process_chat_task(message))
-            # Define an async function to store the result in Redis
-            async def store_in_redis():
-                redis_client = await get_redis_connection()
-                await redis_client.setex(
-                    f"response:{correlation_id}",
-                    300,  # 5 minute TTL
-                    json.dumps(result)
-                )
-            # Run the Redis storage operation
-            loop.run_until_complete(store_in_redis())
-            logger.info(f"Processed chat task and stored response for correlation_id: {correlation_id}")
-        elif function_name == 'process_batch':
-            # Run the batch processing function
-            result = loop.run_until_complete(process_batch_task(message))
-            # Define an async function to store the result in Redis
-            async def store_in_redis():
-                redis_client = await get_redis_connection()
-                await redis_client.setex(
-                    f"response:{correlation_id}",
-                    300,  # 5 minute TTL
-                    json.dumps(result)
-                )
-            # Run the Redis storage operation
-            loop.run_until_complete(store_in_redis())
-            logger.info(f"Processed batch task and stored response for correlation_id: {correlation_id}")
-        else:
-            logger.warning(f"Unknown function: {function_name}")
-    except Exception as e:
-        logger.error(f"Task processing error: {e}", exc_info=True)
-        # Store error in Redis
-        error_result = {"error": str(e)}
-        async def store_error_in_redis():
-            redis_client = await get_redis_connection()
-            await redis_client.setex(
-                f"response:{correlation_id}",
-                300,  # 5 minute TTL
-                json.dumps(error_result)
-            )
-        loop.run_until_complete(store_error_in_redis())
-    finally:
-        # Do not close the loop here, as it might be reused for future tasks
-        pass
-
-
 async def process_batch_task(task_data):
     """Process non-priority batch tasks"""
     try:
         task_type = task_data.get('task_type')
         payload = task_data.get('payload', {})
-
+        
         if task_type == 'get_history':
             # Process history retrieval
             user_id = payload.get('user_id')
             conversation_id = payload.get('conversation_id')
             limit = payload.get('limit', 50)
-
+            
             with get_db() as db:
                 history = ChatHistoryService.get_conversation_history(
                     db,
@@ -340,24 +294,22 @@ async def process_batch_task(task_data):
                     conversation_id=conversation_id,
                     limit=limit
                 )
-
             return {"messages": history or []}  # Ensure not None
-
+        
         if task_type == 'get_conversations':
             # Process conversation list retrieval
             user_id = payload.get('user_id')
-
+            
             with get_db() as db:
                 conversations = ChatHistoryService.get_user_conversations(db, user_id)
-
             return {"conversations": conversations or []}  # Ensure not None
-
+        
         if task_type == 'update_title':
             # Process title update
             user_id = payload.get('user_id')
             conversation_id = payload.get('conversation_id')
             title = payload.get('title')
-
+            
             with get_db() as db:
                 result = ChatHistoryService.update_conversation_title(
                     db,
@@ -365,27 +317,107 @@ async def process_batch_task(task_data):
                     conversation_id,
                     title
                 )
-
             return result or {"success": False}  # Ensure not None
-
+        
         if task_type == 'delete_conversation':
             # Process conversation deletion
             user_id = payload.get('user_id')
             conversation_id = payload.get('conversation_id')
-
+            
             with get_db() as db:
                 result = ChatHistoryService.delete_conversation(db, user_id, conversation_id)
-
             return result or {"success": False}  # Ensure not None
-
+        
         return {"error": f"Unknown task type: {task_type}"}
-
     except Exception as e:
         logger.error(f"Batch task processing error: {e}", exc_info=True)
         return {"error": str(e)}
 
+# This function properly handles creating a new event loop for each task
+def process_task_in_new_loop(message, correlation_id, task_function):
+    """Process a task in a new event loop to avoid loop conflicts"""
+    # Create a new event loop for this task
+    new_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(new_loop)
+    
+    # Add correlation_id to message for streaming
+    message['correlation_id'] = correlation_id
+    
+    try:
+        # Run the task in the new loop
+        result = new_loop.run_until_complete(task_function(message))
+        
+        # Store the result in Redis
+        async def store_result():
+            redis_client = await get_redis_connection()
+            await redis_client.setex(
+                f"response:{correlation_id}",
+                300,  # 5 minute TTL
+                json.dumps(result)
+            )
+        
+        new_loop.run_until_complete(store_result())
+        logger.info(f"Processed task and stored response for correlation_id: {correlation_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Task processing error: {e}", exc_info=True)
+        # Store error in Redis
+        error_result = {"error": str(e)}
+        
+        async def store_error():
+            redis_client = await get_redis_connection()
+            await redis_client.setex(
+                f"response:{correlation_id}",
+                300,  # 5 minute TTL
+                json.dumps(error_result)
+            )
+        
+        new_loop.run_until_complete(store_error())
+        return error_result
+    finally:
+        # Clean up
+        new_loop.close()
+
+def callback_wrapper(message, correlation_id):
+    """Wrap the callback to handle async functions with proper loop isolation"""
+    logger.info(f"Received task with correlation_id: {correlation_id}")
+    
+    # Get the function name to determine which task processor to use
+    function_name = message.get('function')
+    
+    if function_name == 'process_chat':
+        # Process chat task in its own isolated event loop
+        return process_task_in_new_loop(message, correlation_id, process_chat_task)
+    elif function_name == 'process_batch':
+        # Process batch task in its own isolated event loop
+        return process_task_in_new_loop(message, correlation_id, process_batch_task)
+    else:
+        logger.warning(f"Unknown function: {function_name}")
+        # Create error result for unknown function
+        error_result = {"error": f"Unknown function: {function_name}"}
+        
+        # Set up a loop for storing the error
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def store_error():
+            redis_client = await get_redis_connection()
+            await redis_client.setex(
+                f"response:{correlation_id}",
+                300,  # 5 minute TTL
+                json.dumps(error_result)
+            )
+        
+        try:
+            loop.run_until_complete(store_error())
+        finally:
+            loop.close()
+        
+        return error_result
+
 def start_worker():
     """Start async worker"""
+    # Create a main event loop for the consumers
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
@@ -393,11 +425,12 @@ def start_worker():
         chat_consumer = RabbitMQConsumer(CHAT_QUEUE, callback_wrapper)
         batch_consumer = RabbitMQConsumer(BATCH_QUEUE, callback_wrapper)
         
+        # Start both consumers concurrently
         await asyncio.gather(
             chat_consumer.start_consuming(),
             batch_consumer.start_consuming()
         )
-        
+    
     try:
         loop.run_until_complete(run_consumers())
     except KeyboardInterrupt:

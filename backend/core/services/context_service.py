@@ -21,7 +21,7 @@ MAX_CONTEXT_MESSAGES = 6  # Keep last 3 exchanges (user + assistant)
 MAX_MESSAGE_LENGTH = 500  # Truncate messages longer than this
 
 
-def init_redis_pool():
+def init_redis():
     """Initialize Redis connection pool if not already initialized"""
     global redis_pool
     if redis_pool is None:
@@ -41,7 +41,7 @@ def init_redis_pool():
 async def get_redis_client() -> redis.Redis:
     """Get a Redis client from the connection pool"""
     if redis_pool is None:
-        init_redis_pool()
+        init_redis()
     return redis.Redis(connection_pool=redis_pool)
 
 

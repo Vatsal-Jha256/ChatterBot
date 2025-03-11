@@ -1,0 +1,98 @@
+/home/vatsal/InternshipAssessments/Sarvam/repo/./backend/main.py:106: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [197453]
+INFO:     Waiting for application startup.
+INFO:backend.rabbitmq.rabbitmq_service:RabbitMQ is running
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+INFO:     127.0.0.1:35878 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "OPTIONS /async-chat HTTP/1.1" 200 OK
+INFO:backend.rabbitmq.rabbitmq_service:RabbitMQ async publisher initialized
+INFO:     127.0.0.1:35894 - "POST /async-chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "OPTIONS /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35894 - "GET /check-response/d9a7e746-2fbc-42de-b38c-cce8ae2f9eca HTTP/1.1" 200 OK
+INFO:backend.rabbitmq.rabbitmq_service:RabbitMQ async publisher initialized
+INFO:     127.0.0.1:47382 - "POST /async-chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47382 - "OPTIONS /check-response/f6ba09c1-01f3-4086-bfd0-ad0c57429d06 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47382 - "GET /check-response/f6ba09c1-01f3-4086-bfd0-ad0c57429d06 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47382 - "GET /check-response/f6ba09c1-01f3-4086-bfd0-ad0c57429d06 HTTP/1.1" 200 OK
+INFO:backend.rabbitmq.rabbitmq_service:RabbitMQ async publisher initialized
+INFO:     127.0.0.1:35354 - "POST /async-chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35354 - "OPTIONS /check-response/3d84b436-275a-465d-8b6e-09abd8f3f7dc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35354 - "GET /check-response/3d84b436-275a-465d-8b6e-09abd8f3f7dc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35354 - "GET /check-response/3d84b436-275a-465d-8b6e-09abd8f3f7dc HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47798 - "OPTIONS /async-chat HTTP/1.1" 200 OK
+INFO:backend.rabbitmq.rabbitmq_service:RabbitMQ async publisher initialized
+INFO:     127.0.0.1:47798 - "POST /async-chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47798 - "OPTIONS /check-response/eece57ad-49e1-4b26-9dcb-424f3cd7ed35 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47798 - "GET /check-response/eece57ad-49e1-4b26-9dcb-424f3cd7ed35 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47798 - "GET /check-response/eece57ad-49e1-4b26-9dcb-424f3cd7ed35 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47798 - "GET /check-response/eece57ad-49e1-4b26-9dcb-424f3cd7ed35 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47798 - "GET /check-response/eece57ad-49e1-4b26-9dcb-424f3cd7ed35 HTTP/1.1" 200 OK
+INFO:backend.rabbitmq.rabbitmq_service:RabbitMQ async publisher initialized
+INFO:     127.0.0.1:42042 - "POST /async-chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42042 - "OPTIONS /check-response/5891e21b-a33c-4b24-83e6-a595bbff6261 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42042 - "GET /check-response/5891e21b-a33c-4b24-83e6-a595bbff6261 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42042 - "GET /check-response/5891e21b-a33c-4b24-83e6-a595bbff6261 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42042 - "GET /check-response/5891e21b-a33c-4b24-83e6-a595bbff6261 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42042 - "GET /check-response/5891e21b-a33c-4b24-83e6-a595bbff6261 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42042 - "GET /check-response/5891e21b-a33c-4b24-83e6-a595bbff6261 HTTP/1.1" 200 OK
+INFO:backend.rabbitmq.rabbitmq_service:RabbitMQ async publisher initialized
+INFO:     127.0.0.1:34042 - "POST /async-chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34042 - "OPTIONS /check-response/c3eae865-13ac-4fc6-9969-2834116a26c0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34042 - "GET /check-response/c3eae865-13ac-4fc6-9969-2834116a26c0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34042 - "GET /check-response/c3eae865-13ac-4fc6-9969-2834116a26c0 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Finished server process [197453]
+ERROR:    Traceback (most recent call last):
+  File "/usr/lib/python3.10/asyncio/runners.py", line 44, in run
+    return loop.run_until_complete(main)
+  File "uvloop/loop.pyx", line 1512, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1505, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1379, in uvloop.loop.Loop.run_forever
+  File "uvloop/loop.pyx", line 557, in uvloop.loop.Loop._run
+  File "uvloop/loop.pyx", line 476, in uvloop.loop.Loop._on_idle
+  File "uvloop/cbhandles.pyx", line 83, in uvloop.loop.Handle._run
+  File "uvloop/cbhandles.pyx", line 63, in uvloop.loop.Handle._run
+  File "/home/vatsal/.local/lib/python3.10/site-packages/uvicorn/server.py", line 69, in serve
+    with self.capture_signals():
+  File "/usr/lib/python3.10/contextlib.py", line 142, in __exit__
+    next(self.gen)
+  File "/home/vatsal/.local/lib/python3.10/site-packages/uvicorn/server.py", line 330, in capture_signals
+    signal.raise_signal(captured_signal)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/vatsal/.local/lib/python3.10/site-packages/starlette/routing.py", line 700, in lifespan
+    await receive()
+  File "/home/vatsal/.local/lib/python3.10/site-packages/uvicorn/lifespan/on.py", line 137, in receive
+    return await self.receive_queue.get()
+  File "/usr/lib/python3.10/asyncio/queues.py", line 159, in get
+    await getter
+asyncio.exceptions.CancelledError
+
