@@ -4,7 +4,7 @@
 
 ChatterBot is a production-ready, scalable chat application powered by Large Language Models (LLMs) designed to support 10,000+ concurrent users. The system emphasizes scalability, reliability, and cost-effectiveness while maintaining a responsive user experience.
 
-![ChatterBot Interface](images/chat.png)
+![ChatterBot Interface](images/demo.png)
 
 ## System Architecture
 
