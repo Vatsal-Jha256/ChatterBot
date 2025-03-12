@@ -131,23 +131,6 @@ The system implements a sharded database architecture for optimal scalability:
    - Efficient session reuse
    - Automatic connection routing
 
-Here's a key portion of the sharding implementation:
-
-```python
-class ShardConfig:
-    """Configuration for database sharding"""
-    # Number of shards to use
-    SHARD_COUNT = 4
-    
-    @staticmethod
-    def get_shard_for_user(user_id):
-        """Determine which shard to use for a given user ID"""
-        # Create a consistent hash from the user_id
-        hash_obj = hashlib.md5(user_id.encode())
-        hash_int = int(hash_obj.hexdigest(), 16)
-        # Deterministically assign to a shard
-        return hash_int % ShardConfig.SHARD_COUNT
-```
 
 ## NGINX Configuration
 
