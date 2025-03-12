@@ -157,32 +157,6 @@ A sample NGINX configuration is used for routing and load balancing:
 
 The system implements robust error handling with exponential backoff for retries:
 
-```python
-# Example retry mechanism with exponential backoff
-async def call_with_retry(func, *args, max_retries=3, initial_backoff=0.5, **kwargs):
-    """Call a function with exponential backoff retry"""
-    retries = 0
-    backoff = initial_backoff
-    
-    while True:
-        try:
-            return await func(*args, **kwargs)
-        except (ConnectionError, TimeoutError, ServiceUnavailableError) as e:
-            retries += 1
-            if retries > max_retries:
-                logger.error(f"Failed after {max_retries} retries: {e}")
-                raise
-                
-            # Calculate exponential backoff with jitter
-            jitter = random.uniform(0, 0.1 * backoff)
-            wait_time = backoff + jitter
-            logger.warning(f"Retry {retries}/{max_retries} after {wait_time:.2f}s: {e}")
-            await asyncio.sleep(wait_time)
-            
-            # Increase backoff for next retry
-            backoff *= 2
-```
-
 ## Streaming vs. Asynchronous Processing
 
 The system supports both streaming and asynchronous processing modes:
@@ -216,19 +190,6 @@ The system supports horizontal scaling at multiple layers:
    - Ray Serve with dynamic scaling based on request queue
    - Configurable deployment using the following pattern:
    
-   ```python
-   @serve.deployment(
-       num_replicas=4,
-       autoscaling_config={
-           "min_replicas": 2,
-           "max_replicas": 20,
-           "target_num_ongoing_requests_per_replica": 10
-       },
-       ray_actor_options={"num_gpus": 1}
-   )
-   class VLLMGenerateDeployment:
-       # Deployment implementation
-   ```
 
 3. **Database Layer:**
    - Sharded PostgreSQL for distributing write load
@@ -296,18 +257,7 @@ The system allows vertical scaling for specific components:
 ### Failure Handling
 
 #### Circuit Breaker Pattern
-The system implements circuit breakers for critical service dependencies:
-
-```python
-# Example fallback mechanism from code
-async def call_ray_serve(self, payload):
-    try:
-        # Primary call
-        return await self._call_ray(payload)
-    except ServeUnavailable:
-        # Fallback to smaller model
-        return await self._call_fallback_model(payload)
-```
+The system implements circuit breakers for critical service dependencies.
 
 #### Request Retries
 - Exponential backoff for retrying failed requests
@@ -602,42 +552,10 @@ RABBITMQ_URI=amqp://user:pass@rabbitmq:5672/vhost
 
 ### Testing Strategy
 The system is tested using Locust with various scenarios:
-1. **Basic Chat Flow Test:** Simulates simple back-and-forth conversations
-2. **Streaming Test:** Focuses on streaming performance
-3. **Concurrent User Test:** Simulates target of 10,000+ concurrent users
-4. **Long-Running Test:** Checks stability over extended periods
+1. **Streaming Test:** Focuses on streaming performance
+2. **Concurrent User Test:** Simulates target of 10,000+ concurrent users
+3. **Long-Running Test:** Checks stability over extended periods
 
-### Locust Test File
-
-```python
-from locust import HttpUser, task, between
-import json
-
-class ChatUser(HttpUser):
-    wait_time = between(0.1, 0.5)
-    
-    @task
-    def chat_flow(self):
-        headers = {"X-API-Key": "apitest1729"}
-        
-        # Start conversation
-        self.client.post("/conversations", json={
-            "user_id": "load_test_user",
-            "title": "Load Test"
-        }, headers=headers)
-        
-        # Send message
-        response = self.client.post("/async-chat", json={
-            "user_id": "load_test_user",
-            "message": "Explain quantum computing basics",
-            "stream": True
-        }, headers=headers)
-        
-        # Stream response
-        if response.status_code == 200:
-            correlation_id = response.json()["correlation_id"]
-            self.client.get(f"/stream/{correlation_id}", headers=headers, name="/stream/[correlation_id]")
-```
 
 ### Running Load Tests
 
